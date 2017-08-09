@@ -29,7 +29,9 @@ import org.elasticsearch.transport.couchbase.CouchbaseCAPIService;
 public class TransformedFieldParentSelector implements ParentSelector {
     protected Logger logger = Loggers.getLogger(getClass());
 
-    private static final Pattern fieldPattern = Pattern.compile("\\$\\{(.+?)\\}");
+    private static final Pattern fieldPattern = Pattern.compile("\\{(.+?)\\}");
+
+    private static final String documentPrefix = "doc";
 
     private String documentTypeDelimiter;
 
@@ -44,21 +46,22 @@ public class TransformedFieldParentSelector implements ParentSelector {
         this.documentTypeDelimiter = CouchbaseCAPIService.Config.DOCUMENT_TYPE_DELIMITER.get(settings);
 
         for (String key : documentTypeParentFields.keySet()) {
-            String expression = documentTypeParentFields.get(key); // user:${userId}
-            this.documentTypeParentMap.put(key, expression); // <"user", "user:${userId}:${id}">
+            String expression = documentTypeParentFields.get(key); // user:{userId}
+            
+            this.documentTypeParentMap.put(key, expression); // <"user", "user:{userId}:{id}">
         }
     }
 
     @Override
     public Object getParent(Map<String, Object> doc, String docId, String type) {
-       if (documentTypeParentMap == null || documentTypeParentMap.isEmpty() || documentTypeParentMap.containsKey(type)) {
+       if (documentTypeParentMap == null || documentTypeParentMap.isEmpty() || documentTypeParentMap.containsKey(type) == false) {
             return null;
         }
        
         String expression = documentTypeParentMap.get(type);
         
         if (expression == null) {
-            logger.trace("No parent regex found for type {}", type);
+            logger.warn("[TransformedFieldParentSelector:getParent] No parent regex found for type {}", type);
             return null;
         }
 
@@ -67,16 +70,23 @@ public class TransformedFieldParentSelector implements ParentSelector {
 
         for (String expr : parts) {
             Matcher m = fieldPattern.matcher(expr);
-            
+
             if (!m.find()) {
                 transformed.add(expr);
             } else {
-                transformed.add(m.group(1));
+                String field = m.group(1);
+                Object fieldValue = ElasticSearchCAPIBehavior.JSONMapPath(doc, documentPrefix + field);
+
+                if (fieldValue == null) {
+                    continue;
+                }
+
+                transformed.add(fieldValue.toString());
             }
         }
         
         String parentDocId = String.join(this.documentTypeDelimiter, transformed);
 
-        return ElasticSearchCAPIBehavior.JSONMapPath(doc, parentDocId);
+        return parentDocId;
     }
 }
