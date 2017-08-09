@@ -7,5 +7,5 @@
     "pull:all": "npm run pull:capi:server && npm run pull",
     "build:capi:server": "cd couchbase-capi-server && mvn clean install -Dmaven.test.skip=true",
     "build": "npm run build:capi:server && mvn clean install"
- }
+  }
 }

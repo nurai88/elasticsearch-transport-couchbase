@@ -1,0 +1,4 @@
+[submodule "couchbase-capi-server"]
+	path = couchbase-capi-server
+	url = https://github.com/couchbaselabs/couchbase-capi-server.git
+	branch = master
