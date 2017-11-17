@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2012 Couchbase, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
@@ -13,6 +13,8 @@
  */
 package org.elasticsearch.transport.couchbase.capi;
 
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Slf4jReporter;
 import com.couchbase.capi.CAPIBehavior;
 import com.couchbase.capi.CAPIServer;
 import com.couchbase.capi.CouchbaseBehavior;
@@ -26,10 +28,10 @@ import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
-import org.elasticsearch.common.transport.PortsRange;
 import org.elasticsearch.http.BindHttpException;
 import org.elasticsearch.transport.couchbase.CouchbaseCAPIService;
 import org.elasticsearch.transport.couchbase.CouchbaseCAPITransport;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -41,6 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class CouchbaseCAPITransportImpl extends AbstractLifecycleComponent implements CouchbaseCAPITransport {
 
+    private Slf4jReporter metricReporter;
     private CAPIBehavior capiBehavior;
     private CouchbaseBehavior couchbaseBehavior;
     private CAPIServer server;
@@ -62,26 +65,26 @@ public class CouchbaseCAPITransportImpl extends AbstractLifecycleComponent imple
 
     private PluginSettings pluginSettings;
 
-    
+
     @Inject
     public CouchbaseCAPITransportImpl(Settings settings, NetworkService networkService, Client client) {
         super(settings);
-        
+
         this.networkService = networkService;
         this.client = client;
         this.port = CouchbaseCAPIService.Config.PORT.get(settings);
-       
+
         this.bindHost = settings.get("network.bind_host");
         this.publishHost = settings.get("network.publish_host");
-        
+
         this.username = CouchbaseCAPIService.Config.USERNAME.get(settings);
         this.password = CouchbaseCAPIService.Config.PASSWORD.get(settings);
-        
+
         this.bucketUUIDCacheEvictMs = CouchbaseCAPIService.Config.BUCKET_UUID_CACHE_EVICT_MS.get(settings);
         this.bucketUUIDCache = CacheBuilder.newBuilder().expireAfterWrite(this.bucketUUIDCacheEvictMs, TimeUnit.MILLISECONDS).build();
 
         int defaultNumVbuckets = 1024;
-        if(System.getProperty("os.name").toLowerCase().contains("mac")) {
+        if (System.getProperty("os.name").toLowerCase().contains("mac")) {
             logger.info("Detected platform is Mac, changing default num_vbuckets to 64");
             defaultNumVbuckets = 64;
         }
@@ -96,13 +99,13 @@ public class CouchbaseCAPITransportImpl extends AbstractLifecycleComponent imple
         logger.info("Couchbase transport is using type selector: {}", pluginSettings.getTypeSelector().getClass().getCanonicalName());
         logger.info("Couchbase transport is using parent selector: {}", pluginSettings.getParentSelector().getClass().getCanonicalName());
         logger.info("Couchbase transport is using key filter: {}", pluginSettings.getKeyFilter().getClass().getCanonicalName());
-        for (String key: pluginSettings.getDocumentTypeRoutingFields().keySet()) {
+        for (String key : pluginSettings.getDocumentTypeRoutingFields().keySet()) {
             String routingField = pluginSettings.getDocumentTypeRoutingFields().get(key);
             logger.info("Using field {} as routing for type {}", routingField, key);
         }
         logger.info("Plugin Settings: {}", pluginSettings.toString());
     }
-    
+
     private boolean result = false;
 
     @Override
@@ -127,18 +130,19 @@ public class CouchbaseCAPITransportImpl extends AbstractLifecycleComponent imple
         logger.info(("Resolved publish host:" + publishAddressHost));
 
         InetAddress hostAddress;
-        if(hostAddressX.length > 0)
-            hostAddress = hostAddressX[hostAddressX.length-1];
+        if (hostAddressX.length > 0)
+            hostAddress = hostAddressX[hostAddressX.length - 1];
         else
             hostAddress = publishAddressHostX;
         final InetAddress bindAddress = hostAddress;
 
         logger.info(("Resolved bind host:" + bindAddress));
 
-        capiBehavior = new ElasticSearchCAPIBehavior(client, logger, bucketUUIDCache, pluginSettings);
+        MetricRegistry metricRegistry = new MetricRegistry();
+        capiBehavior = new ElasticSearchCAPIBehavior(client, logger, bucketUUIDCache, pluginSettings, metricRegistry);
         couchbaseBehavior = new ElasticSearchCouchbaseBehavior(client, logger, bucketUUIDCache, pluginSettings);
 
-        logger.info("Using port:"+ port);
+        logger.info("Using port:" + port);
 
         final AtomicReference<Exception> lastException = new AtomicReference<>();
 
@@ -171,18 +175,30 @@ public class CouchbaseCAPITransportImpl extends AbstractLifecycleComponent imple
 
         InetSocketAddress boundAddress = server.getBindAddress();
         InetSocketAddress publishAddress = new InetSocketAddress(publishAddressHost, boundAddress.getPort());
-        
+
         logger.info("Host: {}, Port {}", publishAddressHost.getHostAddress(), boundAddress.getPort());
-        
+
         InetSocketTransportAddress[] array = new InetSocketTransportAddress[1];
         array[0] = new InetSocketTransportAddress(boundAddress);
-        
+
         this.boundAddress = new BoundTransportAddress(array, new InetSocketTransportAddress(publishAddress));
+
+        metricReporter = Slf4jReporter.forRegistry(metricRegistry)
+                .convertDurationsTo(TimeUnit.MILLISECONDS)
+                .convertRatesTo(TimeUnit.SECONDS)
+                .outputTo(LoggerFactory.getLogger("org.elasticsearch.transport.couchbase.CouchbaseTransportMetrics"))
+                .withLoggingLevel(Slf4jReporter.LoggingLevel.INFO)
+                .build();
+        metricReporter.start(1, 1, TimeUnit.MINUTES);
     }
 
     @Override
     protected void doStop() throws ElasticsearchException {
-        if(server != null) {
+        if (metricReporter != null) {
+            metricReporter.stop();
+        }
+
+        if (server != null) {
             try {
                 server.stop();
             } catch (Exception e) {
