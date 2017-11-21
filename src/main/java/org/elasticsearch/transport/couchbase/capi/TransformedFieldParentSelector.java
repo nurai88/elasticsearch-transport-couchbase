@@ -57,7 +57,7 @@ public class TransformedFieldParentSelector implements ParentSelector {
        if (documentTypeParentMap == null || documentTypeParentMap.isEmpty() || documentTypeParentMap.containsKey(type) == false) {
             return null;
         }
-       
+
         String expression = documentTypeParentMap.get(type);
         
         if (expression == null) {
@@ -68,14 +68,14 @@ public class TransformedFieldParentSelector implements ParentSelector {
         String[] parts = expression.split(this.documentTypeDelimiter);
         ArrayList<String> transformed = new ArrayList<String>();
 
-        for (String expr : parts) {
-            Matcher m = fieldPattern.matcher(expr);
+        for (int i = 0; i < parts.length; i++) {
+            Matcher m = fieldPattern.matcher(parts[i]);
 
             if (!m.find()) {
-                transformed.add(expr);
+                transformed.add(parts[i]);
             } else {
                 String field = m.group(1);
-                Object fieldValue = ElasticSearchCAPIBehavior.JSONMapPath(doc, documentPrefix + field);
+                Object fieldValue = ElasticSearchCAPIBehavior.JSONMapPath(doc, documentPrefix + "." + field);
 
                 if (fieldValue == null) {
                     continue;
@@ -84,7 +84,7 @@ public class TransformedFieldParentSelector implements ParentSelector {
                 transformed.add(fieldValue.toString());
             }
         }
-        
+
         String parentDocId = String.join(this.documentTypeDelimiter, transformed);
 
         return parentDocId;
