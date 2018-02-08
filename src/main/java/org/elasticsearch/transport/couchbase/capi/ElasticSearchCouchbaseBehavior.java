@@ -17,8 +17,7 @@ import com.carrotsearch.hppc.cursors.ObjectCursor;
 import com.couchbase.capi.CouchbaseBehavior;
 import com.google.common.cache.Cache;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.action.DocWriteRequest;
-import org.elasticsearch.action.ListenableActionFuture;
+import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.admin.cluster.node.info.NodeInfo;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoRequestBuilder;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
@@ -28,6 +27,7 @@ import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsReques
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.elasticsearch.action.get.GetRequestBuilder;
 import org.elasticsearch.action.get.GetResponse;
+import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.Client;
@@ -36,13 +36,14 @@ import org.elasticsearch.cluster.metadata.AliasMetaData;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.plugins.PluginInfo;
-import org.elasticsearch.rest.RestStatus;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
+import static org.elasticsearch.transport.couchbase.capi.CompatibilityHelper.isCreated;
 
 public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
 
@@ -99,14 +100,18 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
             ClusterStateResponse response = stateBuilder.execute().actionGet();
             ImmutableOpenMap<String, IndexMetaData> indices = response.getState().getMetaData().getIndices();
             for (ObjectCursor<String> index : indices.keys()) {
-                if (!shouldIgnoreBucket(index.value)) // Don't include indexes on the ignore list
+                // Don't include indexes on the ignore list
+                if (!shouldIgnoreBucket(index.value)) {
                     bucketNameList.add(index.value);
+                }
 
                 IndexMetaData indexMetaData = indices.get(index.value);
                 ImmutableOpenMap<String, AliasMetaData> aliases = indexMetaData.getAliases();
                 for (ObjectCursor<String> alias : aliases.keys()) {
-                    if (!shouldIgnoreBucket(alias.value)) // Don't include aliases on the ignore list
+                    if (!shouldIgnoreBucket(alias.value)) {
+                        // Don't include aliases on the ignore list
                         bucketNameList.add(alias.value);
+                    }
                 }
             }
 
@@ -116,16 +121,19 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
     }
 
     protected Boolean shouldIgnoreBucket(String bucketName) {
-        if (bucketName == null)
+        if (bucketName == null) {
             return true;
+        }
 
         // The includeIndexes setting takes precedence over ignoreDotIndexes
         if (pluginSettings.getIncludeIndexes() != null &&
-                pluginSettings.getIncludeIndexes().size() > 0)
+                pluginSettings.getIncludeIndexes().size() > 0) {
             return !pluginSettings.getIncludeIndexes().contains(bucketName);
+        }
 
-        if (pluginSettings.getIgnoreDotIndexes() && bucketName.startsWith("."))
+        if (pluginSettings.getIgnoreDotIndexes() && bucketName.startsWith(".")) {
             return true;
+        }
 
         return false;
     }
@@ -137,8 +145,10 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
     }
 
     protected String lookupUUID(String bucket, String id) {
-        if (shouldIgnoreBucket(bucket)) // No point in checking buckets on the ignore list
+        if (shouldIgnoreBucket(bucket)) {
+            // No point in checking buckets on the ignore list
             return null;
+        }
 
         GetRequestBuilder builder = client.prepareGet();
         builder.setIndex(bucket);
@@ -148,7 +158,7 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
 
         String bucketUUID = null;
         GetResponse response;
-        ListenableActionFuture<GetResponse> laf = builder.execute();
+        ActionFuture<GetResponse> laf = builder.execute();
         if (laf != null) {
             response = laf.actionGet();
             if (response.isExists()) {
@@ -161,8 +171,10 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
     }
 
     protected void storeUUID(String bucket, String id, String uuid) {
-        if (shouldIgnoreBucket(bucket)) // Don't touch buckets on the ignore list
+        if (shouldIgnoreBucket(bucket)) {
+            // Don't touch buckets on the ignore list
             return;
+        }
 
         Map<String, Object> doc = new HashMap<>();
         doc.put("uuid", uuid);
@@ -174,13 +186,13 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
         builder.setId(id);
         builder.setType(pluginSettings.getCheckpointDocumentType());
         builder.setSource(toBeIndexed);
-        builder.setOpType(DocWriteRequest.OpType.CREATE);
+        builder.setOpType(IndexRequest.OpType.CREATE);
 
         IndexResponse response;
-        ListenableActionFuture<IndexResponse> laf = builder.execute();
+        ActionFuture<IndexResponse> laf = builder.execute();
         if (laf != null) {
             response = laf.actionGet();
-            if (response.status() != RestStatus.CREATED) {
+            if (!isCreated(response)) {
                 logger.error("did not succeed creating uuid");
             }
         }
@@ -188,8 +200,10 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
 
     @Override
     public String getBucketUUID(String pool, String bucket) {
-        if (shouldIgnoreBucket(bucket)) // Don't touch buckets on the ignore list
+        if (shouldIgnoreBucket(bucket)) {
+            // Don't touch buckets on the ignore list
             return null;
+        }
 
         // first look for bucket UUID in cache
         String bucketUUID = this.bucketUUIDCache.getIfPresent(bucket);
@@ -205,7 +219,7 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
             int tries = 0;
             bucketUUID = this.lookupUUID(bucket, "bucketUUID");
             while (bucketUUID == null && tries < 100) {
-                logger.debug("bucket UUID doesn't exist yet, creaating, attempt: {}", tries + 1);
+                logger.debug("bucket UUID doesn't exist yet, creating, attempt: {}", tries + 1);
                 String newUUID = UUID.randomUUID().toString().replace("-", "");
                 storeUUID(bucket, "bucketUUID", newUUID);
                 bucketUUID = this.lookupUUID(bucket, "bucketUUID");
@@ -243,13 +257,14 @@ public class ElasticSearchCouchbaseBehavior implements CouchbaseBehavior {
                                 Map<String, Object> nodePorts = new HashMap<>();
                                 nodePorts.put("direct", port);
 
+                                String hostAndPort = host + ":" + port;
                                 Map<String, Object> node = new HashMap<>();
-                                node.put("couchApiBase", String.format("http://%s:%s/", host, port));
-                                node.put("hostname", String.format("%s:%s", host, port));
+                                node.put("couchApiBase", "http://" + hostAndPort + "/");
+                                node.put("hostname", hostAndPort);
                                 node.put("ports", nodePorts);
 
                                 nodes.add(node);
-                                logger.debug(String.format("Found transport-couchbase running on: %s:%s", host, port));
+                                logger.debug("Found transport-couchbase running on: {}", hostAndPort);
                             });
                 }
             }

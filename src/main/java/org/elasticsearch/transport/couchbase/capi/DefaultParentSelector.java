@@ -33,8 +33,21 @@ public class DefaultParentSelector implements ParentSelector {
         if (documentTypeParentFields != null && documentTypeParentFields.containsKey(type)) {
             parentField = documentTypeParentFields.get(type);
         }
-        if (parentField == null) return null;
+        if (parentField == null) {
+            return null;
+        }
 
         return ElasticSearchCAPIBehavior.JSONMapPath(doc, parentField);
+    }
+
+    @Override
+    public String getParent(String docId, String type) {
+        // can't determine parent ID without document body
+        return null;
+    }
+
+    @Override
+    public boolean typeHasParent(String type) {
+        return documentTypeParentFields.containsKey(type);
     }
 }
