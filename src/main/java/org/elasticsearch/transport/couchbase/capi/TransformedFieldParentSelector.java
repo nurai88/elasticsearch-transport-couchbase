@@ -89,4 +89,14 @@ public class TransformedFieldParentSelector implements ParentSelector {
 
         return parentDocId;
     }
+
+	@Override
+	public String getParent(String docId, String type) {
+		return null;
+	}
+
+	@Override
+	public boolean typeHasParent(String type) {
+		return documentTypeParentMap.containsKey(type);
+	}
 }
